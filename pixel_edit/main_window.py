@@ -1,6 +1,17 @@
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QToolBar
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QMainWindow,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+)
 
+from . import image_operations
 from .canvas import Canvas
 from .document import Document
 
@@ -8,15 +19,63 @@ OPEN_FILTER = "Images (*.png *.jpg *.jpeg *.bmp)"
 SAVE_FILTER = "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp)"
 ZOOM_STEP = 1.25
 
+class ResizeDialog(QDialog):
+    def __init__(self, width, height, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Resize Image")
+        self.original_width = width
+        self.original_height = height
+        self.width_box = QSpinBox()
+        self.width_box.setRange(1, 20000)
+        self.width_box.setValue(width)
+        self.height_box = QSpinBox()
+        self.height_box.setRange(1, 20000)
+        self.height_box.setValue(height)
+        self.lock_checkbox = QCheckBox("Keep aspect ratio")
+        self.lock_checkbox.setChecked(True)
+        self.width_box.valueChanged.connect(self._width_changed)
+        self.height_box.valueChanged.connect(self._height_changed)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form = QFormLayout()
+        form.addRow("Width", self.width_box)
+        form.addRow("Height", self.height_box)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(self.lock_checkbox)
+        layout.addWidget(buttons)
+
+    def _width_changed(self, value) -> None:
+        if not self.lock_checkbox.isChecked():
+            return
+        ratio = self.original_height / self.original_width
+        new_height = max(1, round(value * ratio))
+        self.height_box.blockSignals(True)
+        self.height_box.setValue(new_height)
+        self.height_box.blockSignals(False)
+
+    def _height_changed(self, value) -> None:
+        if not self.lock_checkbox.isChecked():
+            return
+        ratio = self.original_width / self.original_height
+        new_width = max(1, round(value * ratio))
+        self.width_box.blockSignals(True)
+        self.width_box.setValue(new_width)
+        self.width_box.blockSignals(False)
+
+    def values(self):
+        return self.width_box.value(), self.height_box.value()
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.document = Document()
         self.canvas = Canvas()
+        self.canvas.on_crop_selection_changed = self._set_crop_enabled
         self.setCentralWidget(self.canvas)
         self._create_actions()
         self._create_menu_bar()
-        self._create_toolbar()
         self.resize(1000, 700)
         self._update_title()
         self._update_status()
@@ -43,6 +102,21 @@ class MainWindow(QMainWindow):
         self.zoom_reset_action = QAction("Actual Size", self)
         self.zoom_reset_action.setShortcut("Ctrl+0")
         self.zoom_reset_action.triggered.connect(self.zoom_reset)
+        self.rotate_cw_action = QAction("Rotate Clockwise", self)
+        self.rotate_cw_action.triggered.connect(self.rotate_clockwise)
+        self.rotate_ccw_action = QAction("Rotate Counterclockwise", self)
+        self.rotate_ccw_action.triggered.connect(self.rotate_counterclockwise)
+        self.rotate_180_action = QAction("Rotate 180°", self)
+        self.rotate_180_action.triggered.connect(self.rotate_180)
+        self.flip_h_action = QAction("Flip Horizontal", self)
+        self.flip_h_action.triggered.connect(self.flip_horizontal)
+        self.flip_v_action = QAction("Flip Vertical", self)
+        self.flip_v_action.triggered.connect(self.flip_vertical)
+        self.resize_action = QAction("Resize...", self)
+        self.resize_action.triggered.connect(self.resize_image)
+        self.crop_action = QAction("Crop to Selection", self)
+        self.crop_action.setEnabled(False)
+        self.crop_action.triggered.connect(self.crop_to_selection)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -51,17 +125,20 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_as_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
+        image_menu = self.menuBar().addMenu("&Image")
+        image_menu.addAction(self.rotate_cw_action)
+        image_menu.addAction(self.rotate_ccw_action)
+        image_menu.addAction(self.rotate_180_action)
+        image_menu.addSeparator()
+        image_menu.addAction(self.flip_h_action)
+        image_menu.addAction(self.flip_v_action)
+        image_menu.addSeparator()
+        image_menu.addAction(self.resize_action)
+        image_menu.addAction(self.crop_action)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
         view_menu.addAction(self.zoom_reset_action)
-
-    def _create_toolbar(self) -> None:
-        toolbar = QToolBar("Main Toolbar", self)
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        toolbar.addAction(self.open_action)
-        toolbar.addAction(self.save_action)
 
     def open_image(self) -> None:
         if not self._confirm_discard_changes():
@@ -118,6 +195,59 @@ class MainWindow(QMainWindow):
     def zoom_reset(self) -> None:
         self.canvas.set_zoom(1.0)
         self._update_status()
+
+    def rotate_clockwise(self) -> None:
+        self._apply_operation(image_operations.rotate_90_cw)
+
+    def rotate_counterclockwise(self) -> None:
+        self._apply_operation(image_operations.rotate_90_ccw)
+
+    def rotate_180(self) -> None:
+        self._apply_operation(image_operations.rotate_180)
+
+    def flip_horizontal(self) -> None:
+        self._apply_operation(image_operations.flip_horizontal)
+
+    def flip_vertical(self) -> None:
+        self._apply_operation(image_operations.flip_vertical)
+
+    def resize_image(self) -> None:
+        if not self.document.has_image:
+            return
+        width, height = self.document.image.size
+        dialog = ResizeDialog(width, height, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_width, new_height = dialog.values()
+        new_image = image_operations.resize(self.document.image, new_width, new_height)
+        self.document.apply_edit(new_image)
+        self.canvas.set_image(new_image)
+        self._update_title()
+        self._update_status()
+
+    def crop_to_selection(self) -> None:
+        if not self.document.has_image:
+            return
+        box = self.canvas.crop_box()
+        if box is None:
+            return
+        new_image = image_operations.crop(self.document.image, box)
+        self.document.apply_edit(new_image)
+        self.canvas.set_image(new_image)
+        self._update_title()
+        self._update_status()
+
+    def _apply_operation(self, operation) -> None:
+        if not self.document.has_image:
+            return
+        new_image = operation(self.document.image)
+        self.document.apply_edit(new_image)
+        self.canvas.set_image(new_image)
+        self._update_title()
+        self._update_status()
+
+    def _set_crop_enabled(self, enabled) -> None:
+        self.crop_action.setEnabled(enabled)
 
     def _update_title(self) -> None:
         marker = "*" if self.document.modified else ""
