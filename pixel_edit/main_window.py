@@ -1,3 +1,4 @@
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -5,8 +6,11 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
 )
@@ -67,6 +71,49 @@ class ResizeDialog(QDialog):
     def values(self):
         return self.width_box.value(), self.height_box.value()
 
+class AdjustDialog(QDialog):
+    def __init__(self, image, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Adjustments")
+        self.original_image = image
+        self.result_image = image
+        self.on_preview = None
+        self.brightness_slider, brightness_row = self._build_slider_row()
+        self.contrast_slider, contrast_row = self._build_slider_row()
+        self.saturation_slider, saturation_row = self._build_slider_row()
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form = QFormLayout()
+        form.addRow("Brightness", brightness_row)
+        form.addRow("Contrast", contrast_row)
+        form.addRow("Saturation", saturation_row)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self.setMinimumWidth(320)
+
+    def _build_slider_row(self):
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 200)
+        slider.setValue(100)
+        value_label = QLabel("100%")
+        value_label.setFixedWidth(40)
+        slider.valueChanged.connect(lambda value: value_label.setText(f"{value}%"))
+        slider.valueChanged.connect(self._update_preview)
+        row = QHBoxLayout()
+        row.addWidget(slider)
+        row.addWidget(value_label)
+        return slider, row
+
+    def _update_preview(self, _value=None) -> None:
+        image = image_operations.adjust_brightness(self.original_image, self.brightness_slider.value() / 100)
+        image = image_operations.adjust_contrast(image, self.contrast_slider.value() / 100)
+        image = image_operations.adjust_saturation(image, self.saturation_slider.value() / 100)
+        self.result_image = image
+        if self.on_preview is not None:
+            self.on_preview(image)
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -117,6 +164,10 @@ class MainWindow(QMainWindow):
         self.crop_action = QAction("Crop to Selection", self)
         self.crop_action.setEnabled(False)
         self.crop_action.triggered.connect(self.crop_to_selection)
+        self.adjustments_action = QAction("Adjustments...", self)
+        self.adjustments_action.triggered.connect(self.open_adjustments)
+        self.grayscale_action = QAction("Grayscale", self)
+        self.grayscale_action.triggered.connect(self.apply_grayscale)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -135,6 +186,9 @@ class MainWindow(QMainWindow):
         image_menu.addSeparator()
         image_menu.addAction(self.resize_action)
         image_menu.addAction(self.crop_action)
+        image_menu.addSeparator()
+        image_menu.addAction(self.adjustments_action)
+        image_menu.addAction(self.grayscale_action)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
@@ -236,6 +290,22 @@ class MainWindow(QMainWindow):
         self.canvas.set_image(new_image)
         self._update_title()
         self._update_status()
+
+    def open_adjustments(self) -> None:
+        if not self.document.has_image:
+            return
+        dialog = AdjustDialog(self.document.image, self)
+        dialog.on_preview = self.canvas.set_image
+        if dialog.exec() == QDialog.Accepted:
+            self.document.apply_edit(dialog.result_image)
+            self.canvas.set_image(dialog.result_image)
+            self._update_title()
+            self._update_status()
+        else:
+            self.canvas.set_image(self.document.image)
+
+    def apply_grayscale(self) -> None:
+        self._apply_operation(image_operations.grayscale)
 
     def _apply_operation(self, operation) -> None:
         if not self.document.has_image:
