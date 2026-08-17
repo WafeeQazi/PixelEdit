@@ -25,6 +25,10 @@ class Document:
         self.file_path = Path(path)
         self.modified = False
 
+    def apply_edit(self, new_image: Image.Image) -> None:
+        self.image = new_image
+        self.modified = True
+
     def save(self, path: str | None = None) -> None:
         if self.image is None:
             raise ValueError("There is no image to save.")
