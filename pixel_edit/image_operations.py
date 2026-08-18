@@ -1,4 +1,4 @@
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageDraw, ImageEnhance
 
 def rotate_90_cw(image):
     return image.transpose(Image.ROTATE_270)
@@ -45,3 +45,19 @@ def grayscale(image):
         gray = gray.convert("RGBA")
         gray.putalpha(image.split()[-1])
     return gray
+
+def _draw_segment_inplace(image, start, end, fill, size):
+    draw = ImageDraw.Draw(image)
+    radius = size / 2
+    draw.line([start, end], fill=fill, width=size, joint="curve")
+    for x, y in (start, end):
+        draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=fill)
+    return image
+
+def draw_brush_segment_inplace(image, start, end, color, size):
+    fill = (*color, 255) if image.mode == "RGBA" else color
+    return _draw_segment_inplace(image, start, end, fill, size)
+
+def erase_segment_inplace(image, start, end, size):
+    fill = (0, 0, 0, 0) if image.mode == "RGBA" else (255, 255, 255)
+    return _draw_segment_inplace(image, start, end, fill, size)
