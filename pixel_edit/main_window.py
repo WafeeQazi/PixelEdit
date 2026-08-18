@@ -124,8 +124,7 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menu_bar()
         self.resize(1000, 700)
-        self._update_title()
-        self._update_status()
+        self._refresh_ui()
 
     def _create_actions(self) -> None:
         self.open_action = QAction("&Open...", self)
@@ -140,6 +139,17 @@ class MainWindow(QMainWindow):
         self.exit_action = QAction("E&xit", self)
         self.exit_action.setShortcut(QKeySequence.Quit)
         self.exit_action.triggered.connect(self.close)
+        self.undo_action = QAction("&Undo", self)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.setEnabled(False)
+        self.undo_action.triggered.connect(self.undo)
+        self.redo_action = QAction("&Redo", self)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.setEnabled(False)
+        self.redo_action.triggered.connect(self.redo)
+        self.clear_history_action = QAction("Clear History", self)
+        self.clear_history_action.setEnabled(False)
+        self.clear_history_action.triggered.connect(self.clear_history)
         self.zoom_in_action = QAction("Zoom In", self)
         self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
         self.zoom_in_action.triggered.connect(self.zoom_in)
@@ -176,6 +186,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_as_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
+        edit_menu = self.menuBar().addMenu("&Edit")
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.clear_history_action)
         image_menu = self.menuBar().addMenu("&Image")
         image_menu.addAction(self.rotate_cw_action)
         image_menu.addAction(self.rotate_ccw_action)
@@ -207,8 +222,7 @@ class MainWindow(QMainWindow):
             return
         self.canvas.set_image(self.document.image)
         self.canvas.set_zoom(1.0)
-        self._update_title()
-        self._update_status()
+        self._refresh_ui()
 
     def save_image(self) -> None:
         if not self.document.has_image:
@@ -276,8 +290,7 @@ class MainWindow(QMainWindow):
         new_image = image_operations.resize(self.document.image, new_width, new_height)
         self.document.apply_edit(new_image)
         self.canvas.set_image(new_image)
-        self._update_title()
-        self._update_status()
+        self._refresh_ui()
 
     def crop_to_selection(self) -> None:
         if not self.document.has_image:
@@ -288,8 +301,7 @@ class MainWindow(QMainWindow):
         new_image = image_operations.crop(self.document.image, box)
         self.document.apply_edit(new_image)
         self.canvas.set_image(new_image)
-        self._update_title()
-        self._update_status()
+        self._refresh_ui()
 
     def open_adjustments(self) -> None:
         if not self.document.has_image:
@@ -299,13 +311,26 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.document.apply_edit(dialog.result_image)
             self.canvas.set_image(dialog.result_image)
-            self._update_title()
-            self._update_status()
+            self._refresh_ui()
         else:
             self.canvas.set_image(self.document.image)
 
     def apply_grayscale(self) -> None:
         self._apply_operation(image_operations.grayscale)
+
+    def undo(self) -> None:
+        self.document.undo()
+        self.canvas.set_image(self.document.image)
+        self._refresh_ui()
+
+    def redo(self) -> None:
+        self.document.redo()
+        self.canvas.set_image(self.document.image)
+        self._refresh_ui()
+
+    def clear_history(self) -> None:
+        self.document.clear_history()
+        self._refresh_ui()
 
     def _apply_operation(self, operation) -> None:
         if not self.document.has_image:
@@ -313,11 +338,17 @@ class MainWindow(QMainWindow):
         new_image = operation(self.document.image)
         self.document.apply_edit(new_image)
         self.canvas.set_image(new_image)
-        self._update_title()
-        self._update_status()
+        self._refresh_ui()
 
     def _set_crop_enabled(self, enabled) -> None:
         self.crop_action.setEnabled(enabled)
+
+    def _refresh_ui(self) -> None:
+        self._update_title()
+        self._update_status()
+        self.undo_action.setEnabled(self.document.can_undo)
+        self.redo_action.setEnabled(self.document.can_redo)
+        self.clear_history_action.setEnabled(self.document.can_undo or self.document.can_redo)
 
     def _update_title(self) -> None:
         marker = "*" if self.document.modified else ""
