@@ -1,7 +1,8 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -10,8 +11,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSlider,
     QSpinBox,
+    QToolBar,
     QVBoxLayout,
 )
 
@@ -22,6 +25,7 @@ from .document import Document
 OPEN_FILTER = "Images (*.png *.jpg *.jpeg *.bmp)"
 SAVE_FILTER = "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp)"
 ZOOM_STEP = 1.25
+DEFAULT_BRUSH_SIZE = 10
 
 class ResizeDialog(QDialog):
     def __init__(self, width, height, parent=None):
@@ -120,9 +124,13 @@ class MainWindow(QMainWindow):
         self.document = Document()
         self.canvas = Canvas()
         self.canvas.on_crop_selection_changed = self._set_crop_enabled
+        self.canvas.on_stroke_committed = self._commit_stroke
+        self.canvas.on_color_picked = self._set_brush_color
+        self.canvas.brush_size = DEFAULT_BRUSH_SIZE
         self.setCentralWidget(self.canvas)
         self._create_actions()
         self._create_menu_bar()
+        self._create_toolbar()
         self.resize(1000, 700)
         self._refresh_ui()
 
@@ -178,6 +186,25 @@ class MainWindow(QMainWindow):
         self.adjustments_action.triggered.connect(self.open_adjustments)
         self.grayscale_action = QAction("Grayscale", self)
         self.grayscale_action.triggered.connect(self.apply_grayscale)
+        self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusive(True)
+        self.select_tool_action = QAction("Selection", self)
+        self.select_tool_action.setCheckable(True)
+        self.select_tool_action.setChecked(True)
+        self.select_tool_action.triggered.connect(lambda: self._set_tool("select"))
+        self.tool_group.addAction(self.select_tool_action)
+        self.brush_tool_action = QAction("Brush", self)
+        self.brush_tool_action.setCheckable(True)
+        self.brush_tool_action.triggered.connect(lambda: self._set_tool("brush"))
+        self.tool_group.addAction(self.brush_tool_action)
+        self.eraser_tool_action = QAction("Eraser", self)
+        self.eraser_tool_action.setCheckable(True)
+        self.eraser_tool_action.triggered.connect(lambda: self._set_tool("eraser"))
+        self.tool_group.addAction(self.eraser_tool_action)
+        self.color_picker_action = QAction("Color Picker", self)
+        self.color_picker_action.setCheckable(True)
+        self.color_picker_action.triggered.connect(lambda: self._set_tool("pick"))
+        self.tool_group.addAction(self.color_picker_action)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -204,10 +231,32 @@ class MainWindow(QMainWindow):
         image_menu.addSeparator()
         image_menu.addAction(self.adjustments_action)
         image_menu.addAction(self.grayscale_action)
+        draw_menu = self.menuBar().addMenu("&Draw")
+        draw_menu.addAction(self.select_tool_action)
+        draw_menu.addAction(self.brush_tool_action)
+        draw_menu.addAction(self.eraser_tool_action)
+        draw_menu.addAction(self.color_picker_action)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
         view_menu.addAction(self.zoom_reset_action)
+
+    def _create_toolbar(self) -> None:
+        toolbar = QToolBar("Drawing Toolbar", self)
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+        toolbar.addWidget(QLabel(" Brush Size: "))
+        self.brush_size_box = QSpinBox()
+        self.brush_size_box.setRange(1, 200)
+        self.brush_size_box.setValue(DEFAULT_BRUSH_SIZE)
+        self.brush_size_box.valueChanged.connect(self._set_brush_size)
+        toolbar.addWidget(self.brush_size_box)
+        toolbar.addWidget(QLabel(" Color: "))
+        self.color_button = QPushButton()
+        self.color_button.setFixedSize(24, 24)
+        self.color_button.clicked.connect(self.choose_brush_color)
+        toolbar.addWidget(self.color_button)
+        self._update_color_button()
 
     def open_image(self) -> None:
         if not self._confirm_discard_changes():
@@ -317,6 +366,35 @@ class MainWindow(QMainWindow):
 
     def apply_grayscale(self) -> None:
         self._apply_operation(image_operations.grayscale)
+
+    def _set_tool(self, tool) -> None:
+        self.canvas.set_tool(tool)
+
+    def _commit_stroke(self, new_image) -> None:
+        self.document.apply_edit(new_image)
+        self.canvas.set_image(new_image)
+        self._refresh_ui()
+
+    def choose_brush_color(self) -> None:
+        initial = QColor(*self.canvas.brush_color)
+        color = QColorDialog.getColor(initial, self, "Choose Color")
+        if not color.isValid():
+            return
+        self._set_brush_color((color.red(), color.green(), color.blue()))
+
+    def _set_brush_color(self, color) -> None:
+        self.canvas.brush_color = color
+        self._update_color_button()
+        if self.canvas.tool == "pick":
+            self.brush_tool_action.setChecked(True)
+            self.canvas.set_tool("brush")
+
+    def _set_brush_size(self, size) -> None:
+        self.canvas.brush_size = size
+
+    def _update_color_button(self) -> None:
+        r, g, b = self.canvas.brush_color
+        self.color_button.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid #888;")
 
     def undo(self) -> None:
         self.document.undo()
