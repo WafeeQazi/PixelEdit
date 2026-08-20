@@ -101,7 +101,7 @@ class Canvas(QScrollArea):
         self.image_label.on_paint_release = self._on_paint_release
         self.image_label.on_pick = self._on_pick
         self.setWidget(self.image_label)
-        self.setWidgetResizable(True)
+        self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignCenter)
 
     def set_image(self, image: Image.Image | None) -> None:
