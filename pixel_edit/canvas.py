@@ -1,7 +1,7 @@
 from PIL import Image
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QEvent, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QLabel, QScrollArea
+from PySide6.QtWidgets import QLabel, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
 from . import image_operations
 
@@ -12,6 +12,75 @@ def pil_image_to_qpixmap(image: Image.Image) -> QPixmap:
     raw_bytes = image.tobytes("raw", image.mode)
     qimage = QImage(raw_bytes, image.width, image.height, qt_format)
     return QPixmap.fromImage(qimage.copy())
+
+class TextOverlay(QWidget):
+    HANDLE_HEIGHT = 14
+
+    def __init__(self, parent, text_color):
+        super().__init__(parent)
+        self.on_commit = None
+        self.on_cancel = None
+        self._done = False
+        self.handle = QWidget(self)
+        self.handle.setFixedHeight(self.HANDLE_HEIGHT)
+        self.handle.setStyleSheet("background-color: rgba(50, 130, 220, 200);")
+        self.handle.setCursor(Qt.SizeAllCursor)
+        self.handle.setFocusPolicy(Qt.NoFocus)
+        self.handle.mousePressEvent = self._handle_press
+        self.handle.mouseMoveEvent = self._handle_move
+        self._drag_offset = None
+        r, g, b = text_color
+        self.line_edit = QLineEdit(self)
+        self.line_edit.setStyleSheet(f"color: rgb({r},{g},{b}); background-color: rgba(255,255,255,200); border: 1px solid #3282dc;")
+        self.line_edit.returnPressed.connect(self._commit)
+        self.line_edit.installEventFilter(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.handle)
+        layout.addWidget(self.line_edit)
+        self.resize(160, 30 + self.HANDLE_HEIGHT)
+
+    def _handle_press(self, event) -> None:
+        self._drag_offset = event.position().toPoint()
+
+    def _handle_move(self, event) -> None:
+        if self._drag_offset is None:
+            return
+        delta = event.position().toPoint() - self._drag_offset
+        self.move(self.pos() + delta)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.line_edit:
+            if event.type() == QEvent.FocusOut:
+                self._commit()
+            elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                self._cancel()
+                return True
+        return super().eventFilter(obj, event)
+
+    def discard(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        self.deleteLater()
+
+    def _commit(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        text = self.line_edit.text().strip()
+        if text and self.on_commit is not None:
+            self.on_commit(text, self.pos())
+        self.deleteLater()
+
+    def _cancel(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        if self.on_cancel is not None:
+            self.on_cancel()
+        self.deleteLater()
 
 class ImageLabel(QLabel):
     def __init__(self):
@@ -25,6 +94,7 @@ class ImageLabel(QLabel):
         self.on_paint_move = None
         self.on_paint_release = None
         self.on_pick = None
+        self.on_text_click = None
 
     def mousePressEvent(self, event) -> None:
         if self.pixmap() is None or event.button() != Qt.LeftButton:
@@ -38,6 +108,8 @@ class ImageLabel(QLabel):
             self.on_paint_press(pos)
         elif self.mode == "pick" and self.on_pick is not None:
             self.on_pick(pos)
+        elif self.mode == "text" and self.on_text_click is not None:
+            self.on_text_click(pos)
 
     def mouseMoveEvent(self, event) -> None:
         pos = event.position().toPoint()
@@ -91,20 +163,24 @@ class Canvas(QScrollArea):
         self._source_image: Image.Image | None = None
         self._working_image: Image.Image | None = None
         self._last_point = None
+        self._text_overlay: TextOverlay | None = None
         self.on_crop_selection_changed = None
         self.on_stroke_committed = None
         self.on_color_picked = None
+        self.on_text_committed = None
         self.image_label = ImageLabel()
         self.image_label.on_selection_changed = self._on_selection_changed
         self.image_label.on_paint_press = self._on_paint_press
         self.image_label.on_paint_move = self._on_paint_move
         self.image_label.on_paint_release = self._on_paint_release
         self.image_label.on_pick = self._on_pick
+        self.image_label.on_text_click = self._on_text_click
         self.setWidget(self.image_label)
         self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignCenter)
 
     def set_image(self, image: Image.Image | None) -> None:
+        self._cancel_text_overlay()
         self._source_image = image
         self.image_label.clear_selection()
         self._on_selection_changed(None)
@@ -116,14 +192,18 @@ class Canvas(QScrollArea):
         self._refresh_display()
 
     def set_zoom(self, zoom: float) -> None:
+        self._cancel_text_overlay()
         self.zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, zoom))
         self.image_label.clear_selection()
         self._on_selection_changed(None)
         self._refresh_display()
 
     def set_tool(self, tool: str) -> None:
+        if tool != "text":
+            self._cancel_text_overlay()
         self.tool = tool
-        self.image_label.mode = "select" if tool == "select" else ("pick" if tool == "pick" else "paint")
+        mode_by_tool = {"select": "select", "pick": "pick", "text": "text"}
+        self.image_label.mode = mode_by_tool.get(tool, "paint")
         self.image_label.clear_selection()
         self._on_selection_changed(None)
 
@@ -198,6 +278,37 @@ class Canvas(QScrollArea):
         color = pixel[:3] if isinstance(pixel, tuple) else (pixel, pixel, pixel)
         if self.on_color_picked is not None:
             self.on_color_picked(color)
+
+    def _on_text_click(self, point) -> None:
+        if self._source_image is None:
+            return
+        self._cancel_text_overlay()
+        overlay = TextOverlay(self.image_label, self.brush_color)
+        overlay.move(point)
+        overlay.on_commit = self._finish_text
+        overlay.on_cancel = self._clear_text_overlay
+        self._text_overlay = overlay
+        overlay.show()
+        overlay.line_edit.setFocus()
+
+    def _finish_text(self, text, overlay_pos) -> None:
+        overlay = self._text_overlay
+        self._text_overlay = None
+        if overlay is None:
+            return
+        text_pos = overlay_pos + overlay.line_edit.pos()
+        image_point = self._label_to_image_point(text_pos)
+        if image_point is not None and self.on_text_committed is not None:
+            self.on_text_committed(text, image_point, self.brush_size, self.brush_color)
+
+    def _clear_text_overlay(self) -> None:
+        self._text_overlay = None
+
+    def _cancel_text_overlay(self) -> None:
+        if self._text_overlay is not None:
+            overlay = self._text_overlay
+            self._text_overlay = None
+            overlay.discard()
 
     def _on_selection_changed(self, rect) -> None:
         if self.on_crop_selection_changed is not None:
