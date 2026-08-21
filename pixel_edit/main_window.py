@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         self.canvas.on_crop_selection_changed = self._set_crop_enabled
         self.canvas.on_stroke_committed = self._commit_stroke
         self.canvas.on_color_picked = self._set_brush_color
+        self.canvas.on_text_committed = self._commit_text
         self.canvas.brush_size = DEFAULT_BRUSH_SIZE
         self.setCentralWidget(self.canvas)
         self._create_actions()
@@ -242,6 +243,11 @@ class MainWindow(QMainWindow):
         self.color_picker_action.setCheckable(True)
         self.color_picker_action.triggered.connect(lambda: self._set_tool("pick"))
         self.tool_group.addAction(self.color_picker_action)
+        self.text_tool_action = QAction("Text", self)
+        self.text_tool_action.setShortcut("T")
+        self.text_tool_action.setCheckable(True)
+        self.text_tool_action.triggered.connect(lambda: self._set_tool("text"))
+        self.tool_group.addAction(self.text_tool_action)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -277,6 +283,7 @@ class MainWindow(QMainWindow):
         draw_menu.addAction(self.brush_tool_action)
         draw_menu.addAction(self.eraser_tool_action)
         draw_menu.addAction(self.color_picker_action)
+        draw_menu.addAction(self.text_tool_action)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
@@ -286,7 +293,8 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Drawing Toolbar", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-        toolbar.addWidget(QLabel(" Brush Size: "))
+        self.size_label = QLabel(" Brush Size: ")
+        toolbar.addWidget(self.size_label)
         self.brush_size_box = QSpinBox()
         self.brush_size_box.setRange(1, 200)
         self.brush_size_box.setValue(DEFAULT_BRUSH_SIZE)
@@ -479,11 +487,19 @@ class MainWindow(QMainWindow):
 
     def _set_tool(self, tool) -> None:
         self.canvas.set_tool(tool)
+        self.size_label.setText(" Font Size: " if tool == "text" else " Brush Size: ")
 
     def _commit_stroke(self, new_image) -> None:
         self.document.apply_edit(new_image)
         self.canvas.set_image(new_image)
         self._refresh_ui()
+
+    def _commit_text(self, text, position, font_size, color) -> None:
+        new_image = image_operations.draw_text(self.document.image, position, text, color, font_size)
+        self.document.apply_edit(new_image)
+        self.canvas.set_image(new_image)
+        self._refresh_ui()
+        self.statusBar().showMessage("Added text", 3000)
 
     def choose_brush_color(self) -> None:
         initial = QColor(*self.canvas.brush_color)
