@@ -1,4 +1,4 @@
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 def rotate_90_cw(image):
     return image.transpose(Image.ROTATE_270)
@@ -61,3 +61,10 @@ def draw_brush_segment_inplace(image, start, end, color, size):
 def erase_segment_inplace(image, start, end, size):
     fill = (0, 0, 0, 0) if image.mode == "RGBA" else (255, 255, 255)
     return _draw_segment_inplace(image, start, end, fill, size)
+
+def draw_text(image, position, text, color, size):
+    result = image.copy()
+    font = ImageFont.load_default(size=size)
+    fill = (*color, 255) if result.mode == "RGBA" else color
+    ImageDraw.Draw(result).text(position, text, font=font, fill=fill)
+    return result
